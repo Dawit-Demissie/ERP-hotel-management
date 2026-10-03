@@ -1,0 +1,6 @@
+{
+  "name": "Golden Hotel ERP",
+  "description": "Enterprise-grade AI-powered hotel management system with real-time revenue analytics, smart reservations, restaurant POS, staff scheduling, and operational AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
