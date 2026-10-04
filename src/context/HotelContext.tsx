@@ -57,7 +57,7 @@ interface HotelContextType {
   checkInGuest: (reservationId: string, deposit?: number) => void;
   checkOutGuest: (reservationId: string, paymentMethod: 'Chapa' | 'Credit Card' | 'Cash') => Invoice | null;
   updateRoomStatus: (roomId: string, status: RoomStatus, cleaningPriority?: 'Normal' | 'High' | 'VIP Rush') => void;
-  createReservation: (data: Partial<Omit<Reservation, 'guest'>> & { guest: { name: string; email?: string; phone?: string; vipStatus?: boolean; vipTier?: 'Silver' | 'Gold' | 'Black Diamond'; specialRequests?: string; nationality?: string; idNumber?: string } }) => Reservation;
+  createReservation: (data: Partial<Omit<Reservation, 'guest'>> & { guest: { name: string; email?: string; phone?: string; vipStatus?: boolean; vipTier?: 'Silver' | 'Gold' | 'Black Diamond'; specialRequests?: string; nationality?: string; idNumber?: string } }) => Reservation | null;
   cancelReservation: (reservationId: string) => void;
   createOrder: (order: Omit<RestaurantOrder, 'id' | 'orderNumber' | 'createdAt'>) => RestaurantOrder;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
@@ -310,9 +310,38 @@ export const HotelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     addLog(`Room ${target?.roomNumber || roomId} status changed to ${status}${cleaningPriority !== 'Normal' ? ` (${cleaningPriority})` : ''}`, 'purple');
   };
 
-  // Create new reservation
-  const createReservation = (data: Partial<Omit<Reservation, 'guest'>> & { guest: { name: string; email?: string; phone?: string; vipStatus?: boolean; vipTier?: 'Silver' | 'Gold' | 'Black Diamond'; specialRequests?: string; nationality?: string; idNumber?: string } }): Reservation => {
-    const targetRoom = rooms.find(r => r.id === data.roomId || r.roomNumber === data.roomNumber) || rooms[0];
+  // Create new reservation with strict single-guest anti-double-booking protection
+  const createReservation = (data: Partial<Omit<Reservation, 'guest'>> & { guest: { name: string; email?: string; phone?: string; vipStatus?: boolean; vipTier?: 'Silver' | 'Gold' | 'Black Diamond'; specialRequests?: string; nationality?: string; idNumber?: string } }): Reservation | null => {
+    const targetRoom = rooms.find(r => r.id === data.roomId || r.roomNumber === data.roomNumber);
+    if (!targetRoom) {
+      addLog(`Reservation rejected: Target suite not found`, 'red');
+      return null;
+    }
+
+    // STRICT ANTI-DOUBLE-BOOKING VALIDATION:
+    // Two guests must NOT reserve the same room! Check active reservations & room state.
+    const existingActiveReservation = reservations.find(
+      res => (res.roomId === targetRoom.id || res.roomNumber === targetRoom.roomNumber) &&
+             (res.status === 'Confirmed' || res.status === 'Checked In')
+    );
+
+    if (existingActiveReservation || targetRoom.status === 'Occupied' || targetRoom.status === 'Reserved') {
+      const activeHolder = existingActiveReservation 
+        ? existingActiveReservation.guest.name 
+        : (targetRoom.status === 'Occupied' ? 'In-House Guest' : 'Existing Reserved Guest');
+      
+      addLog(
+        `[DOUBLE-BOOKING PREVENTED] Blocked duplicate reservation attempt for Suite ${targetRoom.roomNumber} (${targetRoom.category}). Room is already ${targetRoom.status} by ${activeHolder}. Two guests cannot hold the same room simultaneously.`,
+        'red'
+      );
+      return null;
+    }
+
+    if (targetRoom.status === 'Maintenance') {
+      addLog(`[RESERVATION BLOCKED] Suite ${targetRoom.roomNumber} is currently under maintenance work and cannot be booked.`, 'red');
+      return null;
+    }
+
     const nights = data.nights || 3;
     const rate = targetRoom.pricePerNight;
     const totalRoomCost = rate * nights;
@@ -364,7 +393,7 @@ export const HotelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // update room status to reserved
     setRooms(prev => prev.map(rm => rm.id === targetRoom.id ? { ...rm, status: 'Reserved' } : rm));
 
-    addLog(`Created reservation ${newRes.confirmationCode} for ${newRes.guest.name} in Room ${targetRoom.roomNumber}`, 'amber');
+    addLog(`Created reservation ${newRes.confirmationCode} for ${newRes.guest.name} in Room ${targetRoom.roomNumber} (Single Occupancy Guaranteed)`, 'green');
     return newRes;
   };
 

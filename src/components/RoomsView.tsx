@@ -16,10 +16,15 @@ import {
   Star,
   Maximize2,
   Users,
-  Heart
+  Heart,
+  Filter,
+  ShieldAlert,
+  Lock,
+  AlertCircle
 } from 'lucide-react';
 import { useHotel } from '../context/HotelContext';
 import { Room, Reservation, RoomStatus, RoomCategory } from '../types';
+import { RoomStatusFilter } from './RoomStatusFilter';
 
 export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = ({ onOpenInvoice }) => {
   const { 
@@ -53,6 +58,10 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
   const [depositAmount, setDepositAmount] = useState<number>(500);
   const [paymentMethod, setPaymentMethod] = useState<'Chapa' | 'Credit Card' | 'Cash'>('Chapa');
 
+  // Booking feedback state
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [bookingSuccessNotice, setBookingSuccessNotice] = useState<string | null>(null);
+
   // New Booking form state
   const [newBookingData, setNewBookingData] = useState({
     guestName: '',
@@ -60,22 +69,74 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
     guestPhone: '',
     vipStatus: false,
     vipTier: 'Gold' as 'Silver' | 'Gold' | 'Black Diamond',
-    roomId: rooms[0]?.id || '',
+    roomId: rooms.find(r => r.status === 'Available')?.id || rooms[0]?.id || '',
     nights: 3,
     adults: 2,
     specialRequests: '',
     channel: 'Direct Website' as const
   });
 
+  // Open booking modal with pre-selected room and validation check
+  const handleOpenNewBooking = (targetRoomId?: string) => {
+    setBookingError(null);
+    const availableRooms = rooms.filter(
+      r => r.status === 'Available' && 
+           !reservations.some(res => (res.roomId === r.id || res.roomNumber === r.roomNumber) && (res.status === 'Confirmed' || res.status === 'Checked In'))
+    );
+
+    let selectedId = '';
+    if (targetRoomId && rooms.some(r => r.id === targetRoomId && r.status === 'Available')) {
+      selectedId = targetRoomId;
+    } else if (availableRooms.length > 0) {
+      selectedId = availableRooms[0].id;
+    } else {
+      selectedId = rooms[0]?.id || '';
+    }
+
+    setNewBookingData({
+      guestName: '',
+      guestEmail: '',
+      guestPhone: '',
+      vipStatus: false,
+      vipTier: 'Gold',
+      roomId: selectedId,
+      nights: 3,
+      adults: 2,
+      specialRequests: '',
+      channel: 'Direct Website'
+    });
+    setShowNewBookingModal(true);
+  };
+
+  // Room status counts for fast toggle badges
+  const roomStatusCounts = {
+    all: rooms.length,
+    available: rooms.filter(r => r.status === 'Available').length,
+    occupied: rooms.filter(r => r.status === 'Occupied').length,
+    cleaning: rooms.filter(r => r.status === 'Cleaning').length,
+    maintenance: rooms.filter(r => r.status === 'Maintenance').length,
+    reserved: rooms.filter(r => r.status === 'Reserved').length
+  };
+
   // Filtered rooms
   const filteredRooms = rooms.filter(rm => {
     if (onlyFavorites && !isFavorite(rm.id)) return false;
     if (selectedFloor !== 'all' && rm.floor !== selectedFloor) return false;
     if (selectedCategory !== 'all' && rm.category !== selectedCategory) return false;
-    if (selectedStatus !== 'all' && rm.status !== selectedStatus) return false;
+    if (selectedStatus !== 'all') {
+      if (selectedStatus === 'Cleaning Required' || selectedStatus === 'Cleaning') {
+        if (rm.status !== 'Cleaning') return false;
+      } else if (rm.status !== selectedStatus) {
+        return false;
+      }
+    }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      return rm.roomNumber.includes(q) || rm.category.toLowerCase().includes(q);
+      return (
+        rm.roomNumber.includes(q) || 
+        rm.category.toLowerCase().includes(q) ||
+        rm.status.toLowerCase().includes(q)
+      );
     }
     return true;
   });
@@ -96,32 +157,75 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
 
   const handleCreateBooking = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBookingData.guestName) return;
+    setBookingError(null);
 
-    createReservation({
+    if (!newBookingData.guestName.trim()) {
+      setBookingError('Please enter the guest name.');
+      return;
+    }
+
+    const targetRoom = rooms.find(r => r.id === newBookingData.roomId);
+    if (!targetRoom) {
+      setBookingError('Please select a valid suite.');
+      return;
+    }
+
+    // STRICT DOUBLE-BOOKING CHECK:
+    // Verify no two guests can hold or reserve the same room!
+    const activeConflictingReservation = reservations.find(
+      r => (r.roomId === targetRoom.id || r.roomNumber === targetRoom.roomNumber) &&
+           (r.status === 'Confirmed' || r.status === 'Checked In')
+    );
+
+    if (activeConflictingReservation || targetRoom.status !== 'Available') {
+      const activeHolder = activeConflictingReservation 
+        ? activeConflictingReservation.guest.name 
+        : (targetRoom.status === 'Occupied' ? 'in-house guest' : 'existing reservation');
+      setBookingError(
+        `Double-Booking Prevented: Suite ${targetRoom.roomNumber} (${targetRoom.category}) is already ${targetRoom.status.toLowerCase()} by ${activeHolder}. Two guests cannot hold the same room simultaneously.`
+      );
+      return;
+    }
+
+    const created = createReservation({
       roomId: newBookingData.roomId,
       nights: Number(newBookingData.nights),
       adults: Number(newBookingData.adults),
       bookingChannel: newBookingData.channel,
       notes: newBookingData.specialRequests,
       guest: {
-        name: newBookingData.guestName,
-        email: newBookingData.guestEmail,
-        phone: newBookingData.guestPhone,
+        name: newBookingData.guestName.trim(),
+        email: newBookingData.guestEmail.trim() || 'guest@sovereignhotel.com',
+        phone: newBookingData.guestPhone.trim() || '+1 555-SOVR',
         vipStatus: newBookingData.vipStatus,
         vipTier: newBookingData.vipStatus ? newBookingData.vipTier : undefined,
         specialRequests: newBookingData.specialRequests
       }
     });
 
+    if (!created) {
+      setBookingError(
+        `Double-Booking Prevented: Suite ${targetRoom.roomNumber} cannot be booked because it is already held by another guest.`
+      );
+      return;
+    }
+
     setShowNewBookingModal(false);
+    setBookingError(null);
+    setBookingSuccessNotice(
+      `✓ Confirmed Reservation ${created.confirmationCode} for ${created.guest.name} in Suite ${targetRoom.roomNumber}. Suite is now locked to this guest.`
+    );
+    setTimeout(() => setBookingSuccessNotice(null), 6000);
+
+    // Reset form with next available room
+    const nextAvailable = rooms.find(r => r.id !== targetRoom.id && r.status === 'Available');
     setNewBookingData({
       guestName: '',
       guestEmail: '',
       guestPhone: '',
       vipStatus: false,
       vipTier: 'Gold',
-      roomId: rooms[0]?.id || '',
+      roomId: nextAvailable?.id || rooms[0]?.id || '',
       nights: 3,
       adults: 2,
       specialRequests: '',
@@ -221,7 +325,7 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
           </div>
 
           <button
-            onClick={() => setShowNewBookingModal(true)}
+            onClick={() => handleOpenNewBooking()}
             className="px-5 py-2.5 rounded-full border border-[#18332f] bg-[#18332f] hover:bg-[#112421] text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-sm cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -229,6 +333,23 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
           </button>
         </div>
       </div>
+
+      {/* Success Notification Banner */}
+      {bookingSuccessNotice && (
+        <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-2xl flex items-center justify-between text-xs text-emerald-900 animate-in fade-in slide-in-from-top-1">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span className="font-medium">{bookingSuccessNotice}</span>
+          </div>
+          <button 
+            onClick={() => setBookingSuccessNotice(null)} 
+            className="text-emerald-700 hover:text-emerald-900 p-1 cursor-pointer"
+            aria-label="Dismiss notice"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Search & Filter Bar */}
       <div className="p-4 rounded-2xl bg-white border border-[#e5e0d6] flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
@@ -259,19 +380,21 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
               <option value="1">Floor 1: Garden Villas</option>
             </select>
 
-            {/* Status filter */}
+            {/* Status filter dropdown */}
             <select
-              value={selectedStatus}
+              value={selectedStatus === 'Cleaning' ? 'Cleaning Required' : selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
               aria-label="Filter suites by status"
               className="bg-[#f8f6f1] border border-[#e5e0d6] rounded-full px-4 py-2 text-[#18332f] font-medium focus:outline-none focus:border-[#18332f]"
             >
-              <option value="all">All Statuses</option>
-              <option value="Available">Available (Open)</option>
-              <option value="Occupied">Occupied</option>
-              <option value="Reserved">Reserved</option>
-              <option value="Cleaning">Cleaning Required</option>
-              <option value="Maintenance">Maintenance</option>
+              <option value="all">All Statuses ({roomStatusCounts.all})</option>
+              <option value="Available">Available ({roomStatusCounts.available})</option>
+              <option value="Occupied">Occupied ({roomStatusCounts.occupied})</option>
+              <option value="Cleaning Required">Cleaning Required ({roomStatusCounts.cleaning})</option>
+              <option value="Maintenance">Maintenance ({roomStatusCounts.maintenance})</option>
+              {roomStatusCounts.reserved > 0 && (
+                <option value="Reserved">Reserved ({roomStatusCounts.reserved})</option>
+              )}
             </select>
 
             {/* Favorite toggle filter button */}
@@ -294,29 +417,39 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
       {/* VIEW 1: ROOM MATRIX & GRID - Styled exactly like the Aurelia screenshot */}
       {activeTab === 'grid' && (
         <div className="space-y-6">
-          {/* Status color guide */}
-          <div className="flex flex-wrap items-center gap-5 text-xs text-[#5f6a65] px-1 font-medium">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#18332f] inline-block" />
-              Available ({rooms.filter(r => r.status === 'Available').length})
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#b46a36] inline-block" />
-              Occupied ({rooms.filter(r => r.status === 'Occupied').length})
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 inline-block" />
-              Reserved ({rooms.filter(r => r.status === 'Reserved').length})
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-sky-600 inline-block" />
-              Cleaning ({rooms.filter(r => r.status === 'Cleaning').length})
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-600 inline-block" />
-              Maintenance ({rooms.filter(r => r.status === 'Maintenance').length})
-            </span>
-          </div>
+          {/* Fast Status Toggle Filter Component */}
+          <RoomStatusFilter
+            selectedStatus={selectedStatus}
+            onStatusChange={setSelectedStatus}
+            counts={roomStatusCounts}
+          />
+
+          {/* Empty state when no rooms match the filter */}
+          {filteredRooms.length === 0 && (
+            <div className="p-12 text-center bg-white border border-[#e5e0d6] rounded-3xl space-y-3">
+              <div className="w-12 h-12 rounded-full bg-[#f8f6f1] text-[#b46a36] flex items-center justify-center mx-auto">
+                <Filter className="w-6 h-6" />
+              </div>
+              <h3 className="font-serif-luxury text-lg font-bold text-[#18332f]">
+                No Suites Match This Filter
+              </h3>
+              <p className="text-xs text-[#5f6a65] max-w-sm mx-auto">
+                No suites currently have status &ldquo;{selectedStatus}&rdquo; matching your active floor and search parameters.
+              </p>
+              <button
+                onClick={() => {
+                  setSelectedStatus('all');
+                  setSelectedFloor('all');
+                  setSelectedCategory('all');
+                  setSearchQuery('');
+                  setOnlyFavorites(false);
+                }}
+                className="px-5 py-2 rounded-full bg-[#18332f] text-white text-xs font-semibold hover:bg-[#112421] transition-colors cursor-pointer shadow-xs"
+              >
+                Reset All Filters
+              </button>
+            </div>
+          )}
 
           {/* Room Cards Grid in the exact 2-column or 3-column Aurelia luxury format */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -338,18 +471,35 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
                       className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-700 ease-out"
                     />
 
-                    {/* Floating Pill on top-left */}
-                    <div className="absolute top-4 left-4">
-                      {isFav ? (
-                        <span className="bg-white/95 backdrop-blur-md text-[#18332f] text-xs font-semibold px-3.5 py-1.5 rounded-full shadow-xs border border-white/40 flex items-center gap-1.5">
+                    {/* Floating Pills on top-left: Status badge + Guest favorite */}
+                    <div className="absolute top-4 left-4 flex flex-wrap items-center gap-1.5 z-10">
+                      {isFav && (
+                        <span className="bg-white/95 backdrop-blur-md text-[#18332f] text-xs font-semibold px-3 py-1 rounded-full shadow-xs border border-white/40 flex items-center gap-1.5">
                           <Heart className="w-3 h-3 fill-rose-500 text-rose-500" />
-                          <span>Guest favorite</span>
-                        </span>
-                      ) : (
-                        <span className="bg-white/95 backdrop-blur-md text-[#18332f] text-xs font-semibold px-3.5 py-1.5 rounded-full shadow-xs border border-white/40">
-                          {rm.status === 'Available' ? 'Only 2 left' : `Suite ${rm.roomNumber} · ${rm.status}`}
+                          <span>Favorite</span>
                         </span>
                       )}
+
+                      {/* Explicit Status Badge Pill */}
+                      <span className={`backdrop-blur-md text-xs font-semibold px-3 py-1 rounded-full shadow-xs border flex items-center gap-1.5 ${
+                        rm.status === 'Available'
+                          ? 'bg-emerald-950/85 text-white border-emerald-600/50'
+                          : rm.status === 'Occupied'
+                          ? 'bg-[#b46a36]/90 text-white border-[#b46a36]/50'
+                          : rm.status === 'Cleaning'
+                          ? 'bg-sky-950/85 text-white border-sky-600/50'
+                          : rm.status === 'Maintenance'
+                          ? 'bg-rose-950/85 text-white border-rose-600/50'
+                          : 'bg-indigo-950/85 text-white border-indigo-600/50'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          rm.status === 'Available' ? 'bg-emerald-400' :
+                          rm.status === 'Occupied' ? 'bg-amber-300' :
+                          rm.status === 'Cleaning' ? 'bg-sky-300' :
+                          rm.status === 'Maintenance' ? 'bg-rose-300' : 'bg-indigo-300'
+                        }`} />
+                        <span>{rm.status === 'Cleaning' ? 'Cleaning Required' : rm.status}</span>
+                      </span>
                     </div>
 
                     {/* Interactive Favorite Icon button on top-right */}
@@ -460,15 +610,51 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
                         </span>
                       </div>
 
-                      {/* Right: Rounded-full border button like in screenshot */}
+                      {/* Right: Dynamic status action button */}
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setSelectedRoomDetail(rm)}
-                          className="px-5 py-2.5 rounded-full border border-[#18332f] text-[#18332f] hover:bg-[#18332f] hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-                        >
-                          <span>{rm.status === 'Available' ? 'Reserve' : 'Inspect'}</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
+                        {rm.status === 'Available' ? (
+                          <button
+                            onClick={() => handleOpenNewBooking(rm.id)}
+                            className="px-5 py-2.5 rounded-full border border-[#18332f] bg-[#18332f] text-white hover:bg-[#112421] text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs hover:scale-[1.01]"
+                          >
+                            <span>Reserve Suite</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        ) : rm.status === 'Reserved' ? (
+                          <button
+                            onClick={() => {
+                              const res = reservations.find(r => (r.roomId === rm.id || r.roomNumber === rm.roomNumber) && r.status === 'Confirmed');
+                              if (res) setCheckInTarget(res);
+                              else setSelectedRoomDetail(rm);
+                            }}
+                            className="px-4 py-2.5 rounded-full border border-indigo-700 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                            title="Suite is reserved. Click to check in guest."
+                          >
+                            <Key className="w-3.5 h-3.5 text-indigo-700" />
+                            <span>Check-In</span>
+                          </button>
+                        ) : rm.status === 'Occupied' ? (
+                          <button
+                            onClick={() => {
+                              const res = reservations.find(r => (r.roomId === rm.id || r.roomNumber === rm.roomNumber) && r.status === 'Checked In');
+                              if (res) setCheckOutTarget(res);
+                              else setSelectedRoomDetail(rm);
+                            }}
+                            className="px-4 py-2.5 rounded-full border border-[#b46a36] bg-[#fbf9f5] text-[#b46a36] hover:bg-[#f4efe6] text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                            title="Guest in-house. Click to view folio or settle."
+                          >
+                            <FileText className="w-3.5 h-3.5 text-[#b46a36]" />
+                            <span>Folio & Settle</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setSelectedRoomDetail(rm)}
+                            className="px-4 py-2.5 rounded-full border border-[#e5e0d6] text-[#5f6a65] hover:bg-[#f6f4ee] hover:text-[#18332f] text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                          >
+                            <span>Inspect</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -529,7 +715,13 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
                         <div className="text-[10px] text-[#88938c]">{res.guest.phone}</div>
                       </td>
                       <td className="py-4 px-4">
-                        <div className="font-medium text-[#18332f]">Suite {res.roomNumber}</div>
+                        <div className="font-medium text-[#18332f] flex items-center gap-1.5">
+                          <span>Suite {res.roomNumber}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200 flex items-center gap-0.5" title="Single occupancy verified. Suite is exclusively locked to this guest.">
+                            <Lock className="w-2.5 h-2.5 text-emerald-700" />
+                            <span>Exclusive Lock</span>
+                          </span>
+                        </div>
                         <div className="text-[10px] text-[#88938c]">{res.roomCategory}</div>
                       </td>
                       <td className="py-4 px-4">
@@ -728,127 +920,236 @@ export const RoomsView: React.FC<{ onOpenInvoice?: (invId: string) => void }> = 
               </button>
             </div>
 
-            <form onSubmit={handleCreateBooking} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[#5f6a65] font-medium block mb-1">Guest Full Name *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Lord Charles Kensington"
-                    value={newBookingData.guestName}
-                    onChange={(e) => setNewBookingData({ ...newBookingData, guestName: e.target.value })}
-                    className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none focus:border-[#18332f]"
-                  />
-                </div>
-                <div>
-                  <label className="text-[#5f6a65] font-medium block mb-1">Email Address</label>
-                  <input
-                    type="email"
-                    placeholder="charles@kensington.com"
-                    value={newBookingData.guestEmail}
-                    onChange={(e) => setNewBookingData({ ...newBookingData, guestEmail: e.target.value })}
-                    className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none focus:border-[#18332f]"
-                  />
-                </div>
-              </div>
+            {(() => {
+              const availableSuites = rooms.filter(
+                r => r.status === 'Available' && 
+                     !reservations.some(res => (res.roomId === r.id || res.roomNumber === r.roomNumber) && (res.status === 'Confirmed' || res.status === 'Checked In'))
+              );
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[#5f6a65] font-medium block mb-1">Phone Number</label>
-                  <input
-                    type="tel"
-                    placeholder="+44 20 7946 0192"
-                    value={newBookingData.guestPhone}
-                    onChange={(e) => setNewBookingData({ ...newBookingData, guestPhone: e.target.value })}
-                    className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none focus:border-[#18332f]"
-                  />
-                </div>
-                <div>
-                  <label className="text-[#5f6a65] font-medium block mb-1">Booking Channel</label>
-                  <select
-                    value={newBookingData.channel}
-                    onChange={(e) => setNewBookingData({ ...newBookingData, channel: e.target.value as any })}
-                    className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none"
-                  >
-                    <option value="Direct Website">Direct Website</option>
-                    <option value="Booking.com">Booking.com</option>
-                    <option value="Expedia">Expedia</option>
-                    <option value="Corporate">Corporate Partner</option>
-                    <option value="Concierge">VIP Concierge</option>
-                  </select>
-                </div>
-              </div>
+              const unavailableSuites = rooms.filter(
+                r => r.status !== 'Available' || 
+                     reservations.some(res => (res.roomId === r.id || res.roomNumber === r.roomNumber) && (res.status === 'Confirmed' || res.status === 'Checked In'))
+              );
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
-                  <label className="text-[#5f6a65] font-medium block mb-1">Assign Suite</label>
-                  <select
-                    value={newBookingData.roomId}
-                    onChange={(e) => setNewBookingData({ ...newBookingData, roomId: e.target.value })}
-                    className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none"
-                  >
-                    {rooms.map(r => (
-                      <option key={r.id} value={r.id}>
-                        Suite {r.roomNumber} - {r.category} (${r.pricePerNight}/n - {r.status})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[#5f6a65] font-medium block mb-1">Nights</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="30"
-                    value={newBookingData.nights}
-                    onChange={(e) => setNewBookingData({ ...newBookingData, nights: Number(e.target.value) })}
-                    className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none"
-                  />
-                </div>
-              </div>
+              const selectedRoomObj = rooms.find(r => r.id === newBookingData.roomId);
+              const activeHoldingConflict = reservations.find(
+                r => (r.roomId === newBookingData.roomId || r.roomNumber === selectedRoomObj?.roomNumber) &&
+                     (r.status === 'Confirmed' || r.status === 'Checked In')
+              );
 
-              {/* VIP Toggle */}
-              <div className="p-4 bg-[#f8f6f1] rounded-2xl border border-[#e5e0d6] flex items-center justify-between">
-                <div>
-                  <span className="font-semibold text-[#18332f] block">VIP Ambassador Protocol</span>
-                  <span className="text-[11px] text-[#5f6a65]">Enables champagne welcome & butler allocation</span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={newBookingData.vipStatus}
-                  onChange={(e) => setNewBookingData({ ...newBookingData, vipStatus: e.target.checked })}
-                  className="w-4 h-4 accent-[#18332f] rounded cursor-pointer"
-                />
-              </div>
+              const isDoubleBookingBlocked = Boolean(
+                selectedRoomObj && (selectedRoomObj.status !== 'Available' || activeHoldingConflict)
+              );
 
-              <div>
-                <label className="text-[#5f6a65] font-medium block mb-1">Special Preferences / Requests</label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g. Feather-free bedding, quiet high floor, vintage champagne on arrival"
-                  value={newBookingData.specialRequests}
-                  onChange={(e) => setNewBookingData({ ...newBookingData, specialRequests: e.target.value })}
-                  className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none"
-                />
-              </div>
+              return (
+                <form onSubmit={handleCreateBooking} className="space-y-4 text-xs">
+                  {/* Single Occupancy Policy Banner */}
+                  <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-900">
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                      <span><strong>Single Occupancy Policy:</strong> Each suite is exclusively reserved for one guest. Double-booking is strictly prohibited.</span>
+                    </div>
+                  </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#f0ece3]">
-                <button
-                  type="button"
-                  onClick={() => setShowNewBookingModal(false)}
-                  className="px-5 py-2 rounded-full border border-[#e5e0d6] text-[#5f6a65] hover:bg-[#f6f4ee] cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2 rounded-full bg-[#18332f] hover:bg-[#112421] text-white font-semibold cursor-pointer shadow-sm"
-                >
-                  Confirm & Reserve
-                </button>
-              </div>
-            </form>
+                  {/* Booking Error Banner */}
+                  {bookingError && (
+                    <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-2xl flex items-start gap-2.5 text-xs text-rose-950 animate-in fade-in">
+                      <AlertCircle className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
+                      <span className="font-medium leading-relaxed">{bookingError}</span>
+                    </div>
+                  )}
+
+                  {/* Overbooking Prevention Alert if selected suite is unavailable */}
+                  {isDoubleBookingBlocked && (
+                    <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-2xl flex items-start gap-2.5 text-xs text-rose-950 animate-in fade-in">
+                      <ShieldAlert className="w-5 h-5 text-rose-700 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="font-bold text-rose-900 block flex items-center gap-1.5">
+                          <span>Double-Booking Blocked</span>
+                          <span className="text-[10px] bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full uppercase font-mono">Policy Enforced</span>
+                        </span>
+                        <p className="leading-relaxed text-[11px] text-rose-900">
+                          Suite {selectedRoomObj?.roomNumber} ({selectedRoomObj?.category}) cannot be reserved because it is currently{' '}
+                          <strong>{selectedRoomObj?.status}</strong>
+                          {activeHoldingConflict ? ` by guest "${activeHoldingConflict.guest.name}" (Ref: ${activeHoldingConflict.confirmationCode})` : ''}.
+                          Two guests cannot reserve the same room. Please select an available suite from the dropdown below.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Full Occupancy Warning */}
+                  {availableSuites.length === 0 && (
+                    <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-2xl flex items-center gap-2.5 text-xs text-amber-950">
+                      <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span><strong>Hotel Sold Out:</strong> 100% of suites are currently occupied or reserved. New bookings are blocked to prevent overbooking.</span>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[#5f6a65] font-medium block mb-1">Guest Full Name *</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Lord Charles Kensington"
+                        value={newBookingData.guestName}
+                        onChange={(e) => {
+                          setBookingError(null);
+                          setNewBookingData({ ...newBookingData, guestName: e.target.value });
+                        }}
+                        className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none focus:border-[#18332f]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[#5f6a65] font-medium block mb-1">Email Address</label>
+                      <input
+                        type="email"
+                        placeholder="charles@kensington.com"
+                        value={newBookingData.guestEmail}
+                        onChange={(e) => setNewBookingData({ ...newBookingData, guestEmail: e.target.value })}
+                        className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none focus:border-[#18332f]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[#5f6a65] font-medium block mb-1">Phone Number</label>
+                      <input
+                        type="tel"
+                        placeholder="+44 20 7946 0192"
+                        value={newBookingData.guestPhone}
+                        onChange={(e) => setNewBookingData({ ...newBookingData, guestPhone: e.target.value })}
+                        className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none focus:border-[#18332f]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[#5f6a65] font-medium block mb-1">Booking Channel</label>
+                      <select
+                        value={newBookingData.channel}
+                        onChange={(e) => setNewBookingData({ ...newBookingData, channel: e.target.value as any })}
+                        className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none"
+                      >
+                        <option value="Direct Website">Direct Website</option>
+                        <option value="Booking.com">Booking.com</option>
+                        <option value="Expedia">Expedia</option>
+                        <option value="Corporate">Corporate Partner</option>
+                        <option value="Concierge">VIP Concierge</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[#5f6a65] font-medium block">Assign Suite *</label>
+                        <span className="text-[10px] text-emerald-700 font-semibold">
+                          {availableSuites.length} Available Suite{availableSuites.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <select
+                        value={newBookingData.roomId}
+                        onChange={(e) => {
+                          setBookingError(null);
+                          setNewBookingData({ ...newBookingData, roomId: e.target.value });
+                        }}
+                        className={`w-full border rounded-xl px-3.5 py-2.5 text-xs text-[#18332f] focus:outline-none transition-colors ${
+                          isDoubleBookingBlocked ? 'bg-rose-50 border-rose-400 font-medium' : 'bg-[#f8f6f1] border-[#e5e0d6]'
+                        }`}
+                      >
+                        {availableSuites.length > 0 ? (
+                          <optgroup label="Available Suites (Eligible for Single-Guest Booking)">
+                            {availableSuites.map(r => (
+                              <option key={r.id} value={r.id}>
+                                ✓ Suite {r.roomNumber} — {r.category} (${r.pricePerNight}/night) [AVAILABLE]
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : (
+                          <option value="" disabled>No suites available (100% capacity)</option>
+                        )}
+
+                        {unavailableSuites.length > 0 && (
+                          <optgroup label="Unavailable Suites (Cannot Reserve - Double Booking Prevention)">
+                            {unavailableSuites.map(r => {
+                              const holder = reservations.find(
+                                res => (res.roomId === r.id || res.roomNumber === r.roomNumber) &&
+                                       (res.status === 'Confirmed' || res.status === 'Checked In')
+                              );
+                              const reason = holder ? `Held by ${holder.guest.name} (${holder.status})` : r.status;
+                              return (
+                                <option key={r.id} value={r.id} disabled className="text-gray-400 bg-gray-100">
+                                  ✗ Suite {r.roomNumber} — {r.category} [{reason} - LOCKED]
+                                </option>
+                              );
+                            })}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[#5f6a65] font-medium block mb-1">Nights</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="30"
+                        value={newBookingData.nights}
+                        onChange={(e) => setNewBookingData({ ...newBookingData, nights: Number(e.target.value) })}
+                        className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* VIP Toggle */}
+                  <div className="p-4 bg-[#f8f6f1] rounded-2xl border border-[#e5e0d6] flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold text-[#18332f] block">VIP Ambassador Protocol</span>
+                      <span className="text-[11px] text-[#5f6a65]">Enables champagne welcome & butler allocation</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={newBookingData.vipStatus}
+                      onChange={(e) => setNewBookingData({ ...newBookingData, vipStatus: e.target.checked })}
+                      className="w-4 h-4 accent-[#18332f] rounded cursor-pointer"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[#5f6a65] font-medium block mb-1">Special Preferences / Requests</label>
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. Feather-free bedding, quiet high floor, vintage champagne on arrival"
+                      value={newBookingData.specialRequests}
+                      onChange={(e) => setNewBookingData({ ...newBookingData, specialRequests: e.target.value })}
+                      className="w-full bg-[#f8f6f1] border border-[#e5e0d6] rounded-xl px-3.5 py-2.5 text-[#18332f] focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#f0ece3]">
+                    <button
+                      type="button"
+                      onClick={() => setShowNewBookingModal(false)}
+                      className="px-5 py-2 rounded-full border border-[#e5e0d6] text-[#5f6a65] hover:bg-[#f6f4ee] cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isDoubleBookingBlocked || availableSuites.length === 0}
+                      className={`px-6 py-2.5 rounded-full font-semibold text-xs flex items-center gap-2 transition-all shadow-sm ${
+                        isDoubleBookingBlocked || availableSuites.length === 0
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed border border-gray-300'
+                          : 'bg-[#18332f] hover:bg-[#112421] text-white cursor-pointer hover:scale-[1.01]'
+                      }`}
+                    >
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>{isDoubleBookingBlocked ? 'Double-Booking Blocked' : 'Confirm & Lock Reservation'}</span>
+                    </button>
+                  </div>
+                </form>
+              );
+            })()}
           </div>
         </div>
       )}
