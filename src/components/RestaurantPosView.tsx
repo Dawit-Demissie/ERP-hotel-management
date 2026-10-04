@@ -11,10 +11,13 @@ import {
   Flame, 
   Send,
   Check,
-  Heart
+  Heart,
+  Printer,
+  FileText
 } from 'lucide-react';
 import { useHotel } from '../context/HotelContext';
-import { MenuItem, OrderItem, OrderStatus, InventoryItem } from '../types';
+import { MenuItem, OrderItem, OrderStatus, InventoryItem, RestaurantOrder } from '../types';
+import { RestaurantInvoiceModal } from './RestaurantInvoiceModal';
 
 export const RestaurantPosView: React.FC = () => {
   const { 
@@ -41,6 +44,10 @@ export const RestaurantPosView: React.FC = () => {
   const [selectedRoomNumber, setSelectedRoomNumber] = useState<string>('401');
   const [paymentMethod, setPaymentMethod] = useState<'Room Charge' | 'Chapa' | 'Credit Card' | 'Cash'>('Room Charge');
   const [orderPlacedFeedback, setOrderPlacedFeedback] = useState<string | null>(null);
+
+  // Customer invoice preview state
+  const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState<RestaurantOrder | null>(null);
+  const [lastPlacedOrder, setLastPlacedOrder] = useState<RestaurantOrder | null>(null);
 
   // Restock modal state
   const [restockTarget, setRestockTarget] = useState<InventoryItem | null>(null);
@@ -109,8 +116,10 @@ export const RestaurantPosView: React.FC = () => {
       billedToRoomId: isRoomService ? guestInRoom?.roomId : undefined
     });
 
+    setLastPlacedOrder(newOrder);
+    setSelectedInvoiceOrder(newOrder);
     setOrderPlacedFeedback(`Fired ${newOrder.orderNumber}! Total: $${totalAmount.toFixed(2)}${isRoomService ? ` billed to Room ${selectedRoomNumber}` : ''}`);
-    setTimeout(() => setOrderPlacedFeedback(null), 4000);
+    setTimeout(() => setOrderPlacedFeedback(null), 6000);
     clearCart();
   };
 
@@ -190,14 +199,29 @@ export const RestaurantPosView: React.FC = () => {
       </div>
 
       {orderPlacedFeedback && (
-        <div className="p-3.5 bg-[#f4efe6] border border-[#b46a36]/40 rounded-2xl text-xs text-[#18332f] flex items-center justify-between shadow-xs">
+        <div className="p-3.5 bg-[#f4efe6] border border-[#b46a36]/40 rounded-2xl text-xs text-[#18332f] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
           <div className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#18332f]" />
             <span className="font-medium">{orderPlacedFeedback}</span>
           </div>
-          <button onClick={() => setOrderPlacedFeedback(null)} className="text-[#5f6a65] hover:text-[#18332f] text-xs font-medium cursor-pointer">
-            Dismiss
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {lastPlacedOrder && (
+              <button
+                type="button"
+                onClick={() => setSelectedInvoiceOrder(lastPlacedOrder)}
+                className="px-3.5 py-1.5 rounded-full bg-[#18332f] hover:bg-[#112421] text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+              >
+                <Printer className="w-3.5 h-3.5 text-[#f5d77f]" />
+                <span>Print Customer Invoice</span>
+              </button>
+            )}
+            <button 
+              onClick={() => setOrderPlacedFeedback(null)} 
+              className="text-[#5f6a65] hover:text-[#18332f] text-xs font-medium cursor-pointer px-2 py-1 rounded-md"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
@@ -525,14 +549,45 @@ export const RestaurantPosView: React.FC = () => {
                 </div>
               </div>
 
-              <button
-                disabled={cart.length === 0}
-                onClick={handlePlaceOrder}
-                className="w-full py-3 rounded-full bg-[#18332f] hover:bg-[#112421] disabled:bg-[#f0ece3] disabled:text-[#88938c] text-white font-semibold text-xs transition-all shadow-sm cursor-pointer flex items-center justify-center gap-2"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Fire KOT Ticket & Settle</span>
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={cart.length === 0}
+                  onClick={() => {
+                    const guestInRoom = checkedInReservations.find(r => r.roomNumber === selectedRoomNumber);
+                    setSelectedInvoiceOrder({
+                      id: 'draft-preview',
+                      orderNumber: `DRAFT-${Math.floor(1000 + Math.random() * 9000)}`,
+                      tableNumber: isRoomService ? undefined : selectedTable,
+                      isRoomService,
+                      roomNumber: isRoomService ? selectedRoomNumber : undefined,
+                      guestName: isRoomService ? (guestInRoom?.guest.name || 'In-House Guest') : undefined,
+                      items: [...cart],
+                      subtotal,
+                      tax,
+                      serviceCharge,
+                      totalAmount,
+                      status: 'Pending',
+                      paymentMethod,
+                      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    });
+                  }}
+                  className="py-3 px-3.5 rounded-full border border-[#18332f] hover:bg-[#f6f4ee] disabled:opacity-40 disabled:pointer-events-none text-[#18332f] font-semibold text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                  title="Preview Customer Invoice"
+                >
+                  <Printer className="w-3.5 h-3.5 text-[#b46a36]" />
+                  <span className="hidden sm:inline">Print Bill</span>
+                </button>
+
+                <button
+                  disabled={cart.length === 0}
+                  onClick={handlePlaceOrder}
+                  className="flex-1 py-3 rounded-full bg-[#18332f] hover:bg-[#112421] disabled:bg-[#f0ece3] disabled:text-[#88938c] text-white font-semibold text-xs transition-all shadow-sm cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Send className="w-3.5 h-3.5 text-[#f5d77f]" />
+                  <span>Fire KOT Ticket & Settle</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -595,30 +650,41 @@ export const RestaurantPosView: React.FC = () => {
                           <div className="pt-2 border-t border-[#e5e0d6] flex items-center justify-between">
                             <span className="font-mono font-bold text-[#18332f]">${ord.totalAmount.toFixed(2)}</span>
 
-                            {statusCol === 'Pending' && (
+                            <div className="flex items-center gap-1.5">
                               <button
-                                onClick={() => updateOrderStatus(ord.id, 'Kitchen In Progress')}
-                                className="px-3 py-1 rounded-full bg-[#18332f] hover:bg-[#112421] text-white text-[10px] font-semibold cursor-pointer shadow-xs"
+                                onClick={() => setSelectedInvoiceOrder(ord)}
+                                className="px-2 py-1 rounded-full border border-[#e5e0d6] hover:bg-[#f6f4ee] text-[#18332f] text-[10px] font-semibold cursor-pointer transition-colors flex items-center gap-1 shadow-xs"
+                                title="Print Customer Invoice"
                               >
-                                Start Cooking
+                                <Printer className="w-3 h-3 text-[#b46a36]" />
+                                <span>Invoice</span>
                               </button>
-                            )}
-                            {statusCol === 'Kitchen In Progress' && (
-                              <button
-                                onClick={() => updateOrderStatus(ord.id, 'Ready to Serve')}
-                                className="px-3 py-1 rounded-full bg-[#18332f] hover:bg-[#112421] text-white text-[10px] font-semibold cursor-pointer shadow-xs"
-                              >
-                                Mark Ready
-                              </button>
-                            )}
-                            {statusCol === 'Ready to Serve' && (
-                              <button
-                                onClick={() => updateOrderStatus(ord.id, 'Delivered')}
-                                className="px-3 py-1 rounded-full bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-semibold cursor-pointer shadow-xs"
-                              >
-                                Mark Delivered
-                              </button>
-                            )}
+
+                              {statusCol === 'Pending' && (
+                                <button
+                                  onClick={() => updateOrderStatus(ord.id, 'Kitchen In Progress')}
+                                  className="px-3 py-1 rounded-full bg-[#18332f] hover:bg-[#112421] text-white text-[10px] font-semibold cursor-pointer shadow-xs"
+                                >
+                                  Start Cooking
+                                </button>
+                              )}
+                              {statusCol === 'Kitchen In Progress' && (
+                                <button
+                                  onClick={() => updateOrderStatus(ord.id, 'Ready to Serve')}
+                                  className="px-3 py-1 rounded-full bg-[#18332f] hover:bg-[#112421] text-white text-[10px] font-semibold cursor-pointer shadow-xs"
+                                >
+                                  Mark Ready
+                                </button>
+                              )}
+                              {statusCol === 'Ready to Serve' && (
+                                <button
+                                  onClick={() => updateOrderStatus(ord.id, 'Delivered')}
+                                  className="px-3 py-1 rounded-full bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-semibold cursor-pointer shadow-xs"
+                                >
+                                  Mark Delivered
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -805,6 +871,12 @@ export const RestaurantPosView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Customer Invoice Print Preview Modal */}
+      <RestaurantInvoiceModal
+        order={selectedInvoiceOrder}
+        onClose={() => setSelectedInvoiceOrder(null)}
+      />
     </div>
   );
 };

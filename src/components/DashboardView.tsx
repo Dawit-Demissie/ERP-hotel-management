@@ -24,7 +24,10 @@ import {
   ShieldAlert,
   AlertTriangle,
   Lightbulb,
-  Heart
+  Heart,
+  FileSpreadsheet,
+  FileText,
+  Printer
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -38,6 +41,7 @@ import {
 } from 'recharts';
 import { useHotel } from '../context/HotelContext';
 import { ActiveTab } from './Sidebar';
+import { RevenueReportModal } from './RevenueReportModal';
 
 export interface MonthlyRevenuePoint {
   month: string;
@@ -153,6 +157,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onOpen
   const [trendRange, setTrendRange] = useState<'12m' | 'h2' | 'h1'>('12m');
   const [trendMetric, setTrendMetric] = useState<'all' | 'departments'>('all');
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const [showReportModal, setShowReportModal] = useState<boolean>(false);
 
   // AI Daily Operational Insight Widget State
   const [aiExecutiveSummary, setAiExecutiveSummary] = useState<string>(
@@ -309,6 +314,51 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onOpen
   const totalYtdRevenue = MONTHLY_REVENUE_TRENDS.reduce((sum, d) => sum + d.revenue, 0);
   const totalYtdTarget = MONTHLY_REVENUE_TRENDS.reduce((sum, d) => sum + d.target, 0);
   const targetVariancePercent = (((totalYtdRevenue - totalYtdTarget) / totalYtdTarget) * 100).toFixed(1);
+
+  const handleExportCSV = () => {
+    const headers = [
+      'Month',
+      'Short Month',
+      'Booked Revenue ($)',
+      'Budget Target ($)',
+      'Variance ($)',
+      'Variance (%)',
+      'Suites Revenue ($)',
+      'Dining & Cellar Revenue ($)',
+      'Occupancy (%)',
+      'ADR ($)'
+    ];
+
+    const rows = filteredTrendData.map(d => {
+      const diff = d.revenue - d.target;
+      const pct = ((diff / d.target) * 100).toFixed(1);
+      return [
+        `"${d.month}"`,
+        `"${d.shortMonth}"`,
+        d.revenue,
+        d.target,
+        diff,
+        `"${pct}%"`,
+        d.roomRevenue,
+        d.fnbRevenue,
+        `"${d.occupancy}%"`,
+        d.adr
+      ].join(',');
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Sovereign_Revenue_Trends_${trendRange.toUpperCase()}_2026.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setActionFeedback(`CSV Export Complete: Downloaded ${filteredTrendData.length} months performance report.`);
+    setTimeout(() => setActionFeedback(null), 3500);
+  };
 
   // Revenue chart dataset (historical 7d)
   const weeklyData = [
@@ -990,6 +1040,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onOpen
                   H1 (Jan - Jun)
                 </button>
               </div>
+
+              {/* Export to PDF/CSV Group for Offline Manager Review */}
+              <div className="flex items-center gap-1 p-1 bg-[#f8f6f1] border border-[#e5e0d6] rounded-full text-xs">
+                <button
+                  onClick={() => setShowReportModal(true)}
+                  className="px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer bg-white border border-[#e5e0d6] hover:border-[#18332f] text-[#18332f] hover:text-[#b46a36] flex items-center gap-1.5 shadow-xs"
+                  title="Open printable executive PDF report preview"
+                >
+                  <FileText className="w-3.5 h-3.5 text-[#b46a36]" />
+                  <span>Export to PDF</span>
+                </button>
+                <button
+                  onClick={handleExportCSV}
+                  className="px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer bg-white border border-[#e5e0d6] hover:border-emerald-700 text-[#18332f] hover:text-emerald-700 flex items-center gap-1.5 shadow-xs"
+                  title="Download performance telemetry CSV spreadsheet"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Export CSV</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1234,6 +1304,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onOpen
           </div>
         </div>
       </div>
+
+      {/* Printable Executive Revenue Trends PDF / CSV Report Modal */}
+      {showReportModal && (
+        <RevenueReportModal
+          data={filteredTrendData}
+          timeframeLabel={trendRange === '12m' ? 'Full Year (12M Jan-Dec)' : trendRange === 'h1' ? 'H1 (Jan-Jun)' : 'H2 (Jul-Dec)'}
+          totalYtdRevenue={totalYtdRevenue}
+          totalYtdTarget={totalYtdTarget}
+          targetVariancePercent={targetVariancePercent}
+          onClose={() => setShowReportModal(false)}
+          onExportCSV={handleExportCSV}
+        />
+      )}
     </div>
   );
 };

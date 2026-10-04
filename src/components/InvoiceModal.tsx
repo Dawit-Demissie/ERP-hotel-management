@@ -1,5 +1,5 @@
-import React from 'react';
-import { Crown, Printer, Download, X, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Crown, Printer, Download, X, CheckCircle2, ArrowLeft } from 'lucide-react';
 import { Invoice } from '../types';
 
 interface InvoiceModalProps {
@@ -10,19 +10,80 @@ interface InvoiceModalProps {
 export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) => {
   if (!invoice) return null;
 
+  const [autoReturnAfterPrint, setAutoReturnAfterPrint] = useState(true);
+  const [isPrintCompleted, setIsPrintCompleted] = useState(false);
+
+  // Close on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  // Handle browser afterprint event
+  useEffect(() => {
+    const handleAfterPrint = () => {
+      setIsPrintCompleted(true);
+      if (autoReturnAfterPrint) {
+        setTimeout(() => {
+          onClose();
+        }, 350);
+      }
+    };
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => window.removeEventListener('afterprint', handleAfterPrint);
+  }, [autoReturnAfterPrint, onClose]);
+
   const handlePrint = () => {
-    window.print();
+    try {
+      window.print();
+      setIsPrintCompleted(true);
+      if (autoReturnAfterPrint) {
+        setTimeout(() => {
+          onClose();
+        }, 300);
+      }
+    } catch (err) {
+      console.warn('Print invocation note:', err);
+      setIsPrintCompleted(true);
+    }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white border border-[#e5e0d6] rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl space-y-6 text-[#18332f] my-8">
+    <div 
+      className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div 
+        className="bg-white border border-[#e5e0d6] rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl space-y-6 text-[#18332f] my-8 animate-in fade-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Modal Top Actions */}
         <div className="flex items-center justify-between pb-4 border-b border-[#f0ece3] print:hidden">
-          <div className="flex items-center gap-2 text-xs text-[#b46a36] font-bold uppercase tracking-wider">
-            <Crown className="w-4 h-4" />
-            <span>Official Hospitality Folio & Tax Invoice</span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 rounded-full border border-[#18332f] hover:bg-[#18332f] text-[#18332f] hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs group"
+              title="Return to Dashboard / Previous View"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 transition-transform group-hover:-translate-x-0.5" />
+              <span>Back</span>
+            </button>
+
+            <div className="flex items-center gap-2 text-xs text-[#b46a36] font-bold uppercase tracking-wider">
+              <Crown className="w-4 h-4" />
+              <span>Hospitality Folio & Tax Invoice</span>
+            </div>
           </div>
+
           <div className="flex items-center gap-2">
             <button
               onClick={handlePrint}
@@ -34,11 +95,29 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
             <button
               onClick={onClose}
               className="p-1.5 text-[#5f6a65] hover:text-[#18332f] rounded-full hover:bg-[#f6f4ee] cursor-pointer"
+              aria-label="Close and return"
+              title="Close (Esc)"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
+
+        {/* Post-Print Feedback Banner */}
+        {isPrintCompleted && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between gap-2 text-xs text-emerald-900 print:hidden">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>Invoice print dispatched.</span>
+            </div>
+            <button
+              onClick={onClose}
+              className="px-3.5 py-1 bg-emerald-800 hover:bg-emerald-900 text-white rounded-full font-semibold text-xs transition-colors cursor-pointer"
+            >
+              Return Now
+            </button>
+          </div>
+        )}
 
         {/* Printable Folio Content */}
         <div className="space-y-6">
@@ -144,6 +223,26 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
             </span>
           </div>
         </div>
+
+        {/* Modal Bottom Actions */}
+        <div className="flex items-center justify-between pt-4 border-t border-[#f0ece3] print:hidden">
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-full border-2 border-[#18332f] hover:bg-[#18332f] text-[#18332f] hover:text-white text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-xs group"
+          >
+            <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
+            <span>Return to Dashboard</span>
+          </button>
+
+          <button
+            onClick={handlePrint}
+            className="px-6 py-2.5 rounded-full bg-[#18332f] hover:bg-[#112421] text-white text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-md"
+          >
+            <Printer className="w-4 h-4 text-[#f5d77f]" />
+            <span>Print Folio Invoice</span>
+          </button>
+        </div>
+
       </div>
     </div>
   );

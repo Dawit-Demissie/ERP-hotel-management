@@ -28,3 +28,42 @@
     background: #c2baa9;
   }
 }
+
+@media print {
+  /* Hide non-printable app chrome */
+  header,
+  aside,
+  nav,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Expand modal to full-page print layout */
+  .fixed.inset-0 {
+    position: static !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  .shadow-2xl,
+  .shadow-xl,
+  .shadow-lg,
+  .shadow-md,
+  .shadow-xs {
+    box-shadow: none !important;
+  }
+
+  /* Ensure colors and borders render crisply on paper/PDF */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
